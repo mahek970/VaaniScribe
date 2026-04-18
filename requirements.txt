@@ -1,0 +1,8 @@
+deepgram-sdk
+google-generativeai
+streamlit
+sounddevice
+numpy
+python-dotenv
+snowflake-connector-python
+websockets

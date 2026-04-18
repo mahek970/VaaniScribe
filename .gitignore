@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.venv/
+venv/
+env/
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Streamlit
+.streamlit/
+
+# Tooling
+.pytest_cache/
+.mypy_cache/
+.vscode/
+.DS_Store
