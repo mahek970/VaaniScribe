@@ -22,7 +22,7 @@ def get_snowflake_connection() -> snowflake.connector.SnowflakeConnection:
         "user": user,
         "password": password,
         "account": account,
-        "database": os.getenv("SNOWFLAKE_DATABASE", "MEETINGMIND"),
+        "database": os.getenv("SNOWFLAKE_DATABASE", "VAANISCRIBE"),
         "schema": os.getenv("SNOWFLAKE_SCHEMA", "MEETINGS"),
     }
 
@@ -38,10 +38,10 @@ def get_snowflake_connection() -> snowflake.connector.SnowflakeConnection:
 
 def init_schema() -> None:
     ddl = [
-        "CREATE DATABASE IF NOT EXISTS MEETINGMIND",
-        "CREATE SCHEMA IF NOT EXISTS MEETINGMIND.MEETINGS",
+        "CREATE DATABASE IF NOT EXISTS VAANISCRIBE",
+        "CREATE SCHEMA IF NOT EXISTS VAANISCRIBE.MEETINGS",
         """
-        CREATE TABLE IF NOT EXISTS MEETINGMIND.MEETINGS.TRANSCRIPTS (
+        CREATE TABLE IF NOT EXISTS VAANISCRIBE.MEETINGS.TRANSCRIPTS (
             MEETING_ID VARCHAR PRIMARY KEY,
             MEETING_DATE TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             TITLE VARCHAR,
@@ -50,7 +50,7 @@ def init_schema() -> None:
         )
         """,
         """
-        CREATE TABLE IF NOT EXISTS MEETINGMIND.MEETINGS.SUMMARIES (
+        CREATE TABLE IF NOT EXISTS VAANISCRIBE.MEETINGS.SUMMARIES (
             MEETING_ID VARCHAR,
             SUMMARY TEXT,
             DECISIONS VARIANT,
@@ -59,7 +59,7 @@ def init_schema() -> None:
         )
         """,
         """
-        CREATE TABLE IF NOT EXISTS MEETINGMIND.MEETINGS.CHUNKS (
+        CREATE TABLE IF NOT EXISTS VAANISCRIBE.MEETINGS.CHUNKS (
             CHUNK_ID VARCHAR PRIMARY KEY,
             MEETING_ID VARCHAR,
             CHUNK_TEXT TEXT,

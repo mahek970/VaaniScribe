@@ -1,4 +1,4 @@
-# MeetingMind India
+# VaaniScribe
 
 Bilingual meeting assistant for Hindi + English (Hinglish) meetings.
 
@@ -92,8 +92,8 @@ During transcription, the script warns about:
 Run the schema setup once in Snowsight:
 
 ```sql
-CREATE DATABASE meetingmind;
-USE DATABASE meetingmind;
+CREATE DATABASE vaaniscribe;
+USE DATABASE vaaniscribe;
 CREATE SCHEMA meetings;
 
 CREATE TABLE meetings.transcripts (

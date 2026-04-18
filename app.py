@@ -15,7 +15,7 @@ from summarise import answer_from_memory, generate_meeting_notes
 
 load_dotenv()
 
-st.set_page_config(page_title="MeetingMind India", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="VaaniScribe", layout="wide", initial_sidebar_state="collapsed")
 
 BRIDGE_PATH = Path(os.getenv("TRANSCRIPT_BRIDGE_PATH", "live_transcript.json"))
 UI_REFRESH_SECONDS = max(1, int(os.getenv("TRANSCRIPT_UI_REFRESH_SECONDS", "2")))
@@ -168,7 +168,7 @@ st.markdown(
         }
     </style>
     <div class="app-hero">
-        <h1>MeetingMind India</h1>
+        <h1>VaaniScribe</h1>
         <p>Hindi + English (Hinglish) AI meeting assistant</p>
     </div>
     """,
