@@ -163,3 +163,5 @@ Live microphone capture works in local mode. On cloud deployment, use pasted/upl
 ## Security
 - Never commit `.env`
 - Rotate any key that was ever exposed in logs/screenshots/chat
+
+<!-- redeploy trigger -->
