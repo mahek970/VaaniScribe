@@ -1,102 +1,97 @@
 # VaaniScribe
 
-Bilingual meeting assistant for Hindi + English (Hinglish) meetings.
+VaaniScribe is a bilingual (Hindi + English / Hinglish) AI meeting assistant that turns conversations into structured notes and searchable team memory.
 
-## Stack
-- Deepgram Nova-3 for real-time speech-to-text
-- Gemini for structured notes and memory answers
-- Snowflake for persistent meeting memory
-- Streamlit for UI
+## Problem
+Fast-moving teams lose decisions and action items in mixed-language meetings. Manual note-taking is inconsistent, and important context gets buried across chat threads and calls.
 
-## Project files
-- `transcribe.py`: local real-time Deepgram microphone transcription
-- `app.py`: Streamlit app for notes generation + memory query
-- `summarise.py`: Gemini note generation and RAG answer logic
-- `snowflake_utils.py`: Snowflake save/query utilities
-- `seed_data.py`: seed fake meetings for demo
+## Solution
+VaaniScribe captures Hinglish meeting content, generates structured notes, and stores every meeting in a queryable memory layer so teams can ask follow-up questions later with source-backed answers.
 
-## Live bridge (terminal -> app)
-`transcribe.py` now writes live transcript state to `live_transcript.json` (configurable with `TRANSCRIPT_BRIDGE_PATH`).
+## Why this matters
+- Reduces post-meeting manual work
+- Preserves organizational memory across sprints
+- Makes bilingual communication searchable and reusable
 
-In the Streamlit app:
-- Enable `Use Live Bridge`
-- Click `Start Meeting`
-- Keep `Auto Sync` on to pull new final transcript lines continuously
-- Manual `Sync Live Feed` is available as fallback
+## What is novel here
+- Built specifically for Hindi + English code-switching meetings
+- Combines realtime transcription, structured summarization, and persistent memory retrieval in one workflow
+- Returns memory answers with source meetings to improve trust and verification
 
-This lets local transcription appear directly in the app without copy/paste.
+## Live Demo
+- App: `ADD_YOUR_LIVE_URL_HERE`
+- Demo video: `ADD_YOUR_VIDEO_URL_HERE`
+- Repository: `ADD_YOUR_GITHUB_REPO_URL_HERE`
 
-## Audio diagnostics for users
-Before starting live transcription, users can run:
+## What it does
+- Captures meeting transcript from local microphone (Deepgram realtime)
+- Generates structured notes (summary, decisions, action items, key points) using Gemini
+- Saves transcript + notes to Snowflake
+- Lets you ask questions about past meetings with source-backed responses
+
+## Tech stack
+- Streamlit: app UI
+- Deepgram Nova-3: speech-to-text
+- Gemini: summarization + meeting memory Q&A
+- Snowflake: persistent meeting storage and retrieval
+
+## Architecture (high level)
+1. `transcribe.py` streams microphone audio to Deepgram and writes live transcript updates
+2. `app.py` reads the live bridge and manages meeting flow
+3. `summarise.py` converts transcript to structured notes and answers memory queries
+4. `snowflake_utils.py` stores and retrieves meeting data from Snowflake
+
+## Project structure
+- `app.py`: Streamlit interface and session flow
+- `transcribe.py`: local realtime transcription and mic diagnostics
+- `summarise.py`: Gemini note generation and memory Q&A
+- `snowflake_utils.py`: Snowflake schema, insert, and query utilities
+- `seed_data.py`: optional demo data seeding
+- `run_app.ps1`: Windows launcher with localhost bind and smart port fallback
+
+## Local setup
+1. Create and activate a virtual environment
+2. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+3. Configure environment
+
+```bash
+copy .env.example .env
+```
+
+Fill all required keys in `.env`:
+- Deepgram key
+- Gemini key
+- Snowflake account/user/password/warehouse/database/schema/role
+
+4. (Optional) Run realtime transcription
+
+```bash
+python transcribe.py
+```
+
+Useful microphone checks:
 
 ```bash
 python transcribe.py --list-devices
-```
-
-One-command mic preflight with PASS/FAIL and device suggestion:
-
-```bash
 python transcribe.py --doctor
-```
-
-Auto-apply suggested device directly to `.env`:
-
-```bash
 python transcribe.py --doctor --doctor-apply
 ```
 
-Skip interactive prompt behavior:
+5. Start the Streamlit app
 
-```bash
-python transcribe.py --doctor --doctor-no-prompt
+```powershell
+powershell -ExecutionPolicy Bypass -File .\run_app.ps1
 ```
 
-Optional custom primary test duration:
+Open the printed localhost URL (typically `http://127.0.0.1:8501`).
 
-```bash
-python transcribe.py --doctor --doctor-seconds 6
-```
-
-Then set the best input in `.env`:
-
-```dotenv
-DEEPGRAM_INPUT_DEVICE=<device index or exact name>
-```
-
-During transcription, the script warns about:
-- No mic frames captured
-- Silent mic input
-- Audio flowing but no transcript (key/model/language issue)
-
-## Quick start
-1. Create and activate a virtual environment.
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. Copy `.env.example` to `.env` and set all keys.
-4. Run local transcription (optional):
-   ```bash
-   python transcribe.py
-   ```
-    To list usable microphone devices:
-    ```bash
-    python transcribe.py --list-devices
-    ```
-5. Run app:
-   ```bash
-    powershell -ExecutionPolicy Bypass -File .\run_app.ps1
-   ```
-
-    Always open the local URL only:
-    ```
-    http://127.0.0.1:8501
-    ```
-
-    If port 8501 is busy, the launcher auto-selects a nearby free port and prints the exact URL.
-
-## Snowflake setup
-Run the schema setup once in Snowsight:
+## Snowflake schema setup
+Run once in Snowsight:
 
 ```sql
 CREATE DATABASE vaaniscribe;
@@ -127,18 +122,40 @@ CREATE TABLE meetings.chunks (
 );
 ```
 
-## Seed demo memory
-After Snowflake credentials are set:
+Optional seed data:
 
 ```bash
 python seed_data.py
 ```
 
 ## Deploy (DigitalOcean App Platform)
-- Ensure `Procfile` exists in repo root.
-- Connect GitHub repo to App Platform.
-- Add env vars from `.env.example`.
-- Every push to main triggers auto-deploy.
+- Keep `Procfile` in repo root
+- Connect GitHub repository to App Platform
+- Set all environment variables from `.env.example`
+- Deploy from `main` branch
 
-## Note on live mic in deployment
-Cloud-deployed Streamlit apps generally cannot capture your local microphone directly in server-side Python. Use local mode for live mic demo and deployed mode for transcript upload/paste and memory search.
+Procfile command:
+
+```procfile
+web: streamlit run app.py --server.address 0.0.0.0 --server.port $PORT --server.headless true
+```
+
+## Cloud microphone note
+Live microphone capture works in local mode. On cloud deployment, use pasted/uploaded transcript and memory query flow.
+
+## Demo flow (2 minutes)
+1. Start meeting and add transcript (live or pasted)
+2. Click End Meeting
+3. Show generated notes
+4. Ask a past-meeting question
+5. Show answer with source meetings
+
+## Hackathon judging quick view
+- Category fit: AI productivity, collaboration, and knowledge management
+- End-to-end completeness: capture -> summarize -> persist -> retrieve
+- Production readiness: deployed app, persistent backend, environment-based configuration
+- Demo clarity: visible before/after value in under 2 minutes
+
+## Security
+- Never commit `.env`
+- Rotate any key that was ever exposed in logs/screenshots/chat
