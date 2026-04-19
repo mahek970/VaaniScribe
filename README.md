@@ -13,6 +13,12 @@ VaaniScribe captures Hinglish meeting content, generates structured notes, and s
 - Preserves organizational memory across sprints
 - Makes bilingual communication searchable and reusable
 
+## Theme alignment
+- AI Productivity: automates repetitive meeting capture and note-taking work
+- Enterprise Collaboration: creates a shared, queryable memory across teams
+- Applied Generative AI: converts unstructured speech into structured, actionable outputs
+- Responsible UX: includes source-backed retrieval so users can verify answers
+
 ## What is novel here
 - Built specifically for Hindi + English code-switching meetings
 - Combines realtime transcription, structured summarization, and persistent memory retrieval in one workflow
@@ -155,6 +161,11 @@ Live microphone capture works in local mode. On cloud deployment, use pasted/upl
 - End-to-end completeness: capture -> summarize -> persist -> retrieve
 - Production readiness: deployed app, persistent backend, environment-based configuration
 - Demo clarity: visible before/after value in under 2 minutes
+
+## Business impact snapshot
+- Saves team time by reducing manual meeting documentation overhead
+- Improves follow-through by surfacing decisions and action items clearly
+- Prevents knowledge loss by storing meeting context in a searchable memory layer
 
 ## Security
 - Never commit `.env`
