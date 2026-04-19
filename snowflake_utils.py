@@ -95,7 +95,7 @@ def save_meeting(transcript: str, summary: dict[str, Any], title: str | None = N
             cur.execute(
                 """
                 INSERT INTO SUMMARIES (MEETING_ID, SUMMARY, DECISIONS, ACTION_ITEMS, KEY_POINTS)
-                VALUES (%s, %s, PARSE_JSON(%s), PARSE_JSON(%s), PARSE_JSON(%s))
+                SELECT %s, %s, PARSE_JSON(%s), PARSE_JSON(%s), PARSE_JSON(%s)
                 """,
                 (
                     meeting_id,

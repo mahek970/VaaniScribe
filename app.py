@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import signal
+import subprocess
+import sys
 import time
 from typing import Any
 
@@ -33,6 +36,7 @@ def _init_state() -> None:
         "bridge_enabled": True,
         "bridge_auto_sync": True,
         "bridge_last_seen_lines": 0,
+        "local_transcriber_pid": 0,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -138,6 +142,72 @@ def _can_save_to_snowflake() -> bool:
     )
 
 
+def _is_process_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _start_local_transcriber() -> tuple[bool, str]:
+    transcribe_path = Path(__file__).with_name("transcribe.py")
+    if not transcribe_path.exists():
+        return False, f"transcribe.py not found at {transcribe_path}"
+
+    python_exec = Path(sys.executable)
+    if os.name == "nt":
+        pythonw = python_exec.with_name("pythonw.exe")
+        if pythonw.exists():
+            python_exec = pythonw
+
+    command = [str(python_exec), str(transcribe_path)]
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = (
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        )
+
+    try:
+        proc = subprocess.Popen(
+            command,
+            cwd=str(transcribe_path.parent),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creationflags,
+        )
+    except Exception as exc:
+        return False, f"Failed to launch transcribe.py: {exc}"
+
+    st.session_state.local_transcriber_pid = int(proc.pid)
+    return True, f"Local mic process started (PID {proc.pid})."
+
+
+def _stop_local_transcriber() -> tuple[bool, str]:
+    pid = int(st.session_state.get("local_transcriber_pid") or 0)
+    if pid <= 0:
+        return False, "No tracked local mic process to stop."
+
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        else:
+            os.kill(pid, signal.SIGTERM)
+    except Exception as exc:
+        return False, f"Failed to stop local mic process {pid}: {exc}"
+
+    st.session_state.local_transcriber_pid = 0
+    return True, f"Stopped local mic process {pid}."
+
+
 _init_state()
 
 st.markdown(
@@ -199,6 +269,14 @@ with left:
     if interim:
         st.caption(f"Interim: {interim}")
 
+    tracked_pid = int(st.session_state.get("local_transcriber_pid") or 0)
+    mic_running = _is_process_running(tracked_pid)
+    if not mic_running and tracked_pid > 0:
+        st.session_state.local_transcriber_pid = 0
+        tracked_pid = 0
+
+    st.caption(f"Local mic process: {'running' if mic_running else 'stopped'}" + (f" (PID {tracked_pid})" if tracked_pid else ""))
+
     bridge_controls = st.columns([1, 1, 1])
     with bridge_controls[0]:
         st.session_state.bridge_enabled = st.checkbox(
@@ -223,21 +301,49 @@ with left:
         st.session_state.transcript_text = _bridge_text(bridge_state)
         st.session_state.bridge_last_seen_lines = line_count
 
-    if st.session_state.bridge_enabled and st.session_state.bridge_auto_sync and st.session_state.meeting_active:
-        if line_count != st.session_state.bridge_last_seen_lines:
-            st.session_state.transcript_text = _bridge_text(bridge_state)
-            st.session_state.bridge_last_seen_lines = line_count
-        time.sleep(UI_REFRESH_SECONDS)
-        st.rerun()
+    mic_controls = st.columns([1, 1, 1])
+    with mic_controls[0]:
+        start_mic_clicked = st.button("Start Mic", use_container_width=True, disabled=mic_running)
+    with mic_controls[1]:
+        stop_mic_clicked = st.button("Stop Mic", use_container_width=True, disabled=not mic_running)
+    with mic_controls[2]:
+        st.caption("Starts/stops local transcribe.py for live bridge audio.")
+
+    if start_mic_clicked:
+        ok, msg = _start_local_transcriber()
+        if ok:
+            st.success(msg)
+        else:
+            st.error(msg)
+
+    if stop_mic_clicked:
+        ok, msg = _stop_local_transcriber()
+        if ok:
+            st.info(msg)
+        else:
+            st.warning(msg)
 
     controls = st.columns([1, 1, 2])
     with controls[0]:
-        if st.button("Start Meeting", use_container_width=True):
+        start_clicked = st.button("Start Meeting", use_container_width=True)
+        if start_clicked:
             st.session_state.meeting_active = True
             st.session_state.meeting_notes = None
             st.session_state.saved_meeting_id = ""
             st.session_state.rag_answer = ""
             st.session_state.rag_sources = []
+            st.session_state.transcript_text = ""
+            st.session_state.bridge_last_seen_lines = line_count
+            if st.session_state.bridge_enabled and not bridge_connected:
+                ok, msg = _start_local_transcriber()
+                if ok:
+                    st.info("Bridge was offline. Auto-started local mic capture.")
+                    st.success(msg)
+                else:
+                    st.warning(
+                        "Start Meeting begins a notes session only. Auto-start failed; click Start Mic or run python transcribe.py in a terminal."
+                    )
+                    st.error(msg)
 
     with controls[1]:
         end_clicked = st.button("End Meeting", use_container_width=True)
@@ -257,12 +363,28 @@ with left:
         if not transcript:
             st.error("Transcript is empty. Add some transcript text before ending the meeting.")
         else:
+            notes_error: Exception | None = None
             with st.spinner("Generating notes with Gemini..."):
                 try:
                     notes = generate_meeting_notes(transcript)
                 except Exception as exc:
-                    notes = None
-                    st.exception(exc)
+                    notes_error = exc
+                    # Keep pipeline moving even if Gemini has a temporary issue.
+                    notes = {
+                        "summary": "Auto-generated notes unavailable. Raw transcript was saved.",
+                        "decisions": [],
+                        "action_items": [],
+                        "key_points": [],
+                    }
+
+            if notes_error is not None:
+                st.warning("Gemini notes generation failed. Saving transcript with fallback notes.")
+                st.error(
+                    "Gemini is unavailable right now (model/quota issue). "
+                    "Transcript was still saved to Snowflake with fallback notes."
+                )
+                with st.expander("Gemini error details"):
+                    st.code(str(notes_error))
 
             if notes:
                 st.session_state.meeting_notes = notes
@@ -284,6 +406,18 @@ with left:
                             st.exception(exc)
                 else:
                     st.warning("Snowflake credentials not set. Notes were generated but not saved.")
+
+    if (
+        st.session_state.bridge_enabled
+        and st.session_state.bridge_auto_sync
+        and st.session_state.meeting_active
+        and not end_clicked
+    ):
+        if line_count != st.session_state.bridge_last_seen_lines:
+            st.session_state.transcript_text = _bridge_text(bridge_state)
+            st.session_state.bridge_last_seen_lines = line_count
+        time.sleep(UI_REFRESH_SECONDS)
+        st.rerun()
 
 with right:
     notes = st.session_state.meeting_notes

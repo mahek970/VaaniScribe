@@ -85,8 +85,15 @@ During transcription, the script warns about:
     ```
 5. Run app:
    ```bash
-   streamlit run app.py
+    powershell -ExecutionPolicy Bypass -File .\run_app.ps1
    ```
+
+    Always open the local URL only:
+    ```
+    http://127.0.0.1:8501
+    ```
+
+    If port 8501 is busy, the launcher auto-selects a nearby free port and prints the exact URL.
 
 ## Snowflake setup
 Run the schema setup once in Snowsight:

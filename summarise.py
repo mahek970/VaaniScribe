@@ -17,14 +17,14 @@ You are a meeting notes assistant for Indian professionals who speak in Hindi an
 You will receive a raw meeting transcript that may contain Hindi words, English words, and mid-sentence language switches. This is normal and not an error.
 
 From this transcript, extract and return a JSON object with exactly these keys:
-{
-  "summary": "2-3 sentence overview of what the meeting was about",
-  "decisions": ["decision 1", "decision 2"],
-  "action_items": [
-    {"task": "what needs to be done", "owner": "person name or unassigned", "deadline": "mentioned deadline or not specified"}
-  ],
-  "key_points": ["point 1", "point 2"]
-}
+{{
+    "summary": "2-3 sentence overview of what the meeting was about",
+    "decisions": ["decision 1", "decision 2"],
+    "action_items": [
+        {{"task": "what needs to be done", "owner": "person name or unassigned", "deadline": "mentioned deadline or not specified"}}
+    ],
+    "key_points": ["point 1", "point 2"]
+}}
 
 Rules:
 - Write output in English
@@ -54,6 +54,16 @@ Answer:
 """
 
 
+FALLBACK_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-flash-latest",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-001",
+    "gemini-2.0-flash-lite",
+    "gemini-2.0-flash-lite-001",
+]
+
+
 def _get_model() -> Any:
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -61,6 +71,66 @@ def _get_model() -> Any:
     genai.configure(api_key=api_key)
     model_name = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
     return genai.GenerativeModel(model_name)
+
+
+def _is_model_not_found_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "notfound" in text or "not found" in text or "not supported" in text
+
+
+def _is_retryable_model_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return (
+        "resourceexhausted" in text
+        or "quota exceeded" in text
+        or "rate limit" in text
+        or "429" in text
+    )
+
+
+def _candidate_models() -> list[str]:
+    configured = os.getenv("GEMINI_MODEL", "gemini-1.5-flash").strip()
+    models: list[str] = []
+    if configured:
+        models.append(configured)
+    for name in FALLBACK_MODELS:
+        if name not in models:
+            models.append(name)
+    return models
+
+
+def _generate_content_with_model_fallback(prompt: str) -> Any:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY is not set.")
+
+    genai.configure(api_key=api_key)
+
+    last_error: Exception | None = None
+    errors: list[str] = []
+    for model_name in _candidate_models():
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt)
+            if response and getattr(response, "text", ""):
+                return response
+            last_error = RuntimeError(f"Model {model_name} returned an empty response.")
+            errors.append(f"{model_name}: empty response")
+        except Exception as exc:
+            last_error = exc
+            errors.append(f"{model_name}: {exc}")
+            if _is_model_not_found_error(exc) or _is_retryable_model_error(exc):
+                continue
+            raise
+
+    tried = ", ".join(_candidate_models())
+    condensed = " | ".join(errors[:3])
+    raise RuntimeError(
+        "No working Gemini model found right now. "
+        f"Tried: {tried}. "
+        f"Last error: {last_error}. "
+        f"Details: {condensed}"
+    )
 
 
 def _extract_json(text: str) -> dict[str, Any]:
@@ -125,9 +195,8 @@ def generate_meeting_notes(transcript: str) -> dict[str, Any]:
     if not transcript:
         raise ValueError("Transcript is empty.")
 
-    model = _get_model()
     prompt = SUMMARY_PROMPT.format(transcript=transcript)
-    response = model.generate_content(prompt)
+    response = _generate_content_with_model_fallback(prompt)
 
     if not response or not getattr(response, "text", ""):
         raise RuntimeError("Gemini returned an empty response.")
@@ -151,9 +220,8 @@ def answer_from_memory(user_question: str, retrieved_chunks: list[dict[str, str]
         ]
     )
 
-    model = _get_model()
     prompt = RAG_PROMPT.format(context=context, question=user_question.strip())
-    response = model.generate_content(prompt)
+    response = _generate_content_with_model_fallback(prompt)
 
     if not response or not getattr(response, "text", ""):
         return "Could not generate an answer from memory right now."
