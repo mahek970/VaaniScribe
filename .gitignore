@@ -15,6 +15,7 @@ env/
 
 # Streamlit
 .streamlit/
+live_transcript.json
 
 # Tooling
 .pytest_cache/
