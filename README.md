@@ -15,7 +15,7 @@ VaaniScribe captures Hinglish meeting content, generates structured notes, and s
 
 ## Theme alignment
 - AI Productivity: automates repetitive meeting capture and note-taking work
-- Enterprise Collaboration: creates a shared, queryable memory across teams
+- Enterprise Collaboration: creates a shared, query-able memory across teams
 - Applied Generative AI: converts unstructured speech into structured, actionable outputs
 - Responsible UX: includes source-backed retrieval so users can verify answers
 
@@ -148,13 +148,6 @@ web: streamlit run app.py --server.address 0.0.0.0 --server.port $PORT --server.
 
 ## Cloud microphone note
 Live microphone capture works in local mode. On cloud deployment, use pasted/uploaded transcript and memory query flow.
-
-## Demo flow (2 minutes)
-1. Start meeting and add transcript (live or pasted)
-2. Click End Meeting
-3. Show generated notes
-4. Ask a past-meeting question
-5. Show answer with source meetings
 
 ## Hackathon judging quick view
 - Category fit: AI productivity, collaboration, and knowledge management
