@@ -63,6 +63,24 @@ FALLBACK_MODELS = [
     "gemini-2.0-flash-lite-001",
 ]
 
+CORRECT_TRANSCRIPT_PROMPT = """
+You are VaaniCorrect, a transcript cleanup helper for Hindi + English mixed meetings.
+
+Rewrite the transcript so it is easier to summarize and read.
+
+Rules:
+- Fix obvious ASR mistakes, punctuation, spacing, and likely Indian-accent mishearings
+- Preserve the meaning and language mix
+- Do not add new facts
+- Keep names, deadlines, and decisions intact when possible
+- Return only the corrected transcript text with no markdown or bullets
+
+Session type: {session_type}
+
+Transcript:
+{transcript}
+"""
+
 
 def _get_model() -> Any:
     api_key = os.getenv("GEMINI_API_KEY")
@@ -203,6 +221,25 @@ def generate_meeting_notes(transcript: str) -> dict[str, Any]:
 
     parsed = _extract_json(response.text)
     return _normalize_summary(parsed)
+
+
+def correct_transcript_text(transcript: str, session_type: str = "Meeting") -> str:
+    transcript = transcript.strip()
+    if not transcript:
+        return transcript
+
+    prompt = CORRECT_TRANSCRIPT_PROMPT.format(session_type=session_type.strip() or "Meeting", transcript=transcript)
+
+    try:
+        response = _generate_content_with_model_fallback(prompt)
+    except Exception:
+        return transcript
+
+    if not response or not getattr(response, "text", ""):
+        return transcript
+
+    corrected = response.text.strip()
+    return corrected or transcript
 
 
 def answer_from_memory(user_question: str, retrieved_chunks: list[dict[str, str]]) -> str:

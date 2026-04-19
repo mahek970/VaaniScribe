@@ -8,6 +8,8 @@ Environment:
 	DEEPGRAM_INPUT_DEVICE=<optional input device index or exact device name>
 	DEEPGRAM_SILENCE_RMS=<optional silence threshold, default 120>
 	TRANSCRIPT_BRIDGE_PATH=<optional json path, default live_transcript.json>
+	TRANSCRIPT_HTTP_PUSH_URL=<optional POST endpoint for remote bridge state>
+	TRANSCRIPT_HTTP_TOKEN=<optional bearer token for push/pull auth>
 
 Usage:
 	python transcribe.py
@@ -27,6 +29,8 @@ from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 import numpy as np
 import sounddevice as sd
@@ -306,6 +310,12 @@ class TranscriptBridge:
 		self.merge_window_seconds = float(os.getenv("TRANSCRIPT_MERGE_WINDOW_SECONDS", "2.0"))
 		self.write_retries = int(os.getenv("TRANSCRIPT_WRITE_RETRIES", "3"))
 		self.write_retry_delay = float(os.getenv("TRANSCRIPT_WRITE_RETRY_DELAY", "0.05"))
+		self.http_push_url = os.getenv("TRANSCRIPT_HTTP_PUSH_URL", "").strip()
+		self.http_token = os.getenv("TRANSCRIPT_HTTP_TOKEN", "").strip()
+		self.http_timeout_seconds = max(1.0, float(os.getenv("TRANSCRIPT_HTTP_TIMEOUT_SECONDS", "3")))
+		self.http_retries = int(os.getenv("TRANSCRIPT_HTTP_RETRIES", "2"))
+		self.http_retry_delay = float(os.getenv("TRANSCRIPT_HTTP_RETRY_DELAY", "0.2"))
+		self._http_last_error: str = ""
 		self._last_final_at = 0.0
 		self.state: dict[str, Any] = {
 			"connected": False,
@@ -387,6 +397,39 @@ class TranscriptBridge:
 		if last_error is not None:
 			with suppress(OSError):
 				self.path.write_text(payload, encoding="utf-8")
+
+		self._push_http(payload)
+
+	def _push_http(self, payload: str) -> None:
+		if not self.http_push_url:
+			return
+
+		last_error: str = ""
+		for attempt in range(self.http_retries + 1):
+			try:
+				req = Request(
+					self.http_push_url,
+					data=payload.encode("utf-8"),
+					method="POST",
+				)
+				req.add_header("Content-Type", "application/json")
+				if self.http_token:
+					req.add_header("Authorization", f"Bearer {self.http_token}")
+					req.add_header("X-Bridge-Token", self.http_token)
+				with urlopen(req, timeout=self.http_timeout_seconds) as resp:
+					_ = resp.read()
+				if self._http_last_error:
+					print("[bridge-http] Recovered connection to HTTP bridge.")
+					self._http_last_error = ""
+				return
+			except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
+				last_error = str(exc)
+				if attempt < self.http_retries:
+					time.sleep(self.http_retry_delay * (attempt + 1))
+
+		if last_error and last_error != self._http_last_error:
+			self._http_last_error = last_error
+			print(f"[bridge-http] Push failed: {last_error}", file=sys.stderr)
 
 
 def _build_deepgram_ws_url() -> str:

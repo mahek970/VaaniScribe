@@ -8,12 +8,14 @@ import subprocess
 import sys
 import time
 from typing import Any
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 from dotenv import load_dotenv
 import streamlit as st
 
 from snowflake_utils import query_past_meetings, save_meeting
-from summarise import answer_from_memory, generate_meeting_notes
+from summarise import answer_from_memory, correct_transcript_text, generate_meeting_notes
 
 
 load_dotenv()
@@ -22,6 +24,10 @@ st.set_page_config(page_title="VaaniScribe", layout="wide", initial_sidebar_stat
 
 BRIDGE_PATH = Path(os.getenv("TRANSCRIPT_BRIDGE_PATH", "live_transcript.json"))
 UI_REFRESH_SECONDS = max(1, int(os.getenv("TRANSCRIPT_UI_REFRESH_SECONDS", "2")))
+BRIDGE_PULL_URL = os.getenv("TRANSCRIPT_HTTP_PULL_URL", "").strip()
+BRIDGE_HTTP_TOKEN = os.getenv("TRANSCRIPT_HTTP_TOKEN", "").strip()
+BRIDGE_HTTP_TIMEOUT = max(1.0, float(os.getenv("TRANSCRIPT_HTTP_TIMEOUT_SECONDS", "3")))
+DEPLOYED_APP_URL = os.getenv("DIGITALOCEAN_APP_URL", "").strip()
 
 
 def _init_state() -> None:
@@ -29,14 +35,19 @@ def _init_state() -> None:
         "meeting_active": False,
         "transcript_text": "",
         "meeting_notes": None,
+        "notes_raw_text": "",
         "saved_meeting_id": "",
         "notes_text": "",
+        "notes_view_mode": "full",
         "rag_answer": "",
         "rag_sources": [],
         "bridge_enabled": True,
         "bridge_auto_sync": True,
         "bridge_last_seen_lines": 0,
+        "bridge_last_seen_updated_at": 0.0,
         "local_transcriber_pid": 0,
+        "session_type": "Meeting",
+        "vaani_correct": True,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -44,6 +55,21 @@ def _init_state() -> None:
 
 
 def _load_bridge_state() -> dict[str, Any]:
+    if BRIDGE_PULL_URL:
+        try:
+            req = Request(BRIDGE_PULL_URL, method="GET")
+            if BRIDGE_HTTP_TOKEN:
+                req.add_header("Authorization", f"Bearer {BRIDGE_HTTP_TOKEN}")
+                req.add_header("X-Bridge-Token", BRIDGE_HTTP_TOKEN)
+            with urlopen(req, timeout=BRIDGE_HTTP_TIMEOUT) as resp:
+                raw = resp.read().decode("utf-8")
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                return data
+        except (URLError, TimeoutError, ValueError, OSError):
+            # Fallback to local file bridge if remote bridge is temporarily unavailable.
+            pass
+
     if not BRIDGE_PATH.exists():
         return {
             "connected": False,
@@ -98,6 +124,45 @@ def _notes_to_markdown(notes: dict[str, Any]) -> str:
     lines.append("Key Points")
     for k in notes.get("key_points", []):
         lines.append(f"- {k}")
+    return "\n".join(lines).strip()
+
+
+def _simplify_notes_to_markdown(notes: dict[str, Any]) -> str:
+    lines: list[str] = []
+    summary = str(notes.get("summary", "")).strip()
+    if summary:
+        short_summary = summary.split(".")[0].strip()
+        if short_summary and not short_summary.endswith("."):
+            short_summary += "."
+        lines.append("Simple Summary")
+        lines.append(short_summary or summary)
+        lines.append("")
+
+    decisions = [str(item).strip() for item in notes.get("decisions", []) if str(item).strip()]
+    if decisions:
+        lines.append("Top Decisions")
+        for item in decisions[:3]:
+            lines.append(f"- {item}")
+        lines.append("")
+
+    action_items = notes.get("action_items", [])
+    if isinstance(action_items, list) and action_items:
+        lines.append("Action Items")
+        for item in action_items[:3]:
+            if isinstance(item, dict):
+                task = str(item.get("task", "")).strip()
+                owner = str(item.get("owner", "unassigned")).strip() or "unassigned"
+                deadline = str(item.get("deadline", "not specified")).strip() or "not specified"
+                if task:
+                    lines.append(f"- {task} ({owner}, {deadline})")
+        lines.append("")
+
+    key_points = [str(item).strip() for item in notes.get("key_points", []) if str(item).strip()]
+    if key_points:
+        lines.append("Key Points")
+        for item in key_points[:4]:
+            lines.append(f"- {item}")
+
     return "\n".join(lines).strip()
 
 
@@ -259,13 +324,23 @@ with left:
     bridge_state = _load_bridge_state()
     final_lines = bridge_state.get("final_lines", []) if isinstance(bridge_state.get("final_lines", []), list) else []
     line_count = len(final_lines)
+    bridge_updated_at = float(bridge_state.get("updated_at", 0) or 0)
     bridge_connected = bool(bridge_state.get("connected", False))
     bridge_device = str(bridge_state.get("device", "") or "unknown")
     interim = str(bridge_state.get("interim", "") or "")
+    bridge_source = "http" if BRIDGE_PULL_URL else "file"
 
     st.caption(
-        f"Bridge: {'connected' if bridge_connected else 'offline'} | Device: {bridge_device} | Final lines: {line_count}"
+        f"Bridge: {'connected' if bridge_connected else 'offline'} | Source: {bridge_source} | Device: {bridge_device} | Final lines: {line_count}"
     )
+    if st.session_state.bridge_enabled:
+        if BRIDGE_PULL_URL:
+            if not bridge_connected:
+                st.warning("HTTP bridge is configured but currently offline/unreachable. Check TRANSCRIPT_HTTP_PULL_URL, token, and bridge service health.")
+        elif DEPLOYED_APP_URL:
+            st.warning(
+                "Hosted app detected but HTTP bridge is not configured. Set TRANSCRIPT_HTTP_PULL_URL + TRANSCRIPT_HTTP_TOKEN on the hosted app and TRANSCRIPT_HTTP_PUSH_URL + TRANSCRIPT_HTTP_TOKEN where transcribe.py runs."
+            )
     if interim:
         st.caption(f"Interim: {interim}")
 
@@ -276,6 +351,9 @@ with left:
         tracked_pid = 0
 
     st.caption(f"Local mic process: {'running' if mic_running else 'stopped'}" + (f" (PID {tracked_pid})" if tracked_pid else ""))
+
+    st.caption("VaaniScribe was built for equity — it works for students with dyslexia, physical disabilities, and non-native speakers.")
+    st.caption("Every meeting is stored permanently — your organization builds institutional memory over time.")
 
     bridge_controls = st.columns([1, 1, 1])
     with bridge_controls[0]:
@@ -300,6 +378,7 @@ with left:
     if st.session_state.bridge_enabled and sync_clicked:
         st.session_state.transcript_text = _bridge_text(bridge_state)
         st.session_state.bridge_last_seen_lines = line_count
+        st.session_state.bridge_last_seen_updated_at = bridge_updated_at
 
     mic_controls = st.columns([1, 1, 1])
     with mic_controls[0]:
@@ -334,6 +413,7 @@ with left:
             st.session_state.rag_sources = []
             st.session_state.transcript_text = ""
             st.session_state.bridge_last_seen_lines = line_count
+            st.session_state.bridge_last_seen_updated_at = bridge_updated_at
             if st.session_state.bridge_enabled and not bridge_connected:
                 ok, msg = _start_local_transcriber()
                 if ok:
@@ -347,6 +427,21 @@ with left:
 
     with controls[1]:
         end_clicked = st.button("End Meeting", use_container_width=True)
+
+    st.session_state.session_type = st.selectbox(
+        "Session Type",
+        options=["Meeting", "Lecture", "Lab Report"],
+        index=["Meeting", "Lecture", "Lab Report"].index(st.session_state.session_type)
+        if st.session_state.session_type in ["Meeting", "Lecture", "Lab Report"]
+        else 0,
+        help="Choose how the transcript should be framed before summarization.",
+    )
+
+    st.session_state.vaani_correct = st.checkbox(
+        "VaaniCorrect",
+        value=st.session_state.vaani_correct,
+        help="VaaniCorrect automatically fixes Indian accent mishearings before summarizing.",
+    )
 
     st.session_state.transcript_text = st.text_area(
         "Transcript",
@@ -364,9 +459,15 @@ with left:
             st.error("Transcript is empty. Add some transcript text before ending the meeting.")
         else:
             notes_error: Exception | None = None
+            transcript_for_summary = transcript
+            if st.session_state.vaani_correct:
+                transcript_for_summary = correct_transcript_text(transcript, st.session_state.session_type)
+
             with st.spinner("Generating notes with Gemini..."):
                 try:
-                    notes = generate_meeting_notes(transcript)
+                    notes = generate_meeting_notes(
+                        f"Session type: {st.session_state.session_type}\n\n{transcript_for_summary}"
+                    )
                 except Exception as exc:
                     notes_error = exc
                     # Keep pipeline moving even if Gemini has a temporary issue.
@@ -388,7 +489,9 @@ with left:
 
             if notes:
                 st.session_state.meeting_notes = notes
-                st.session_state.notes_text = _notes_to_markdown(notes)
+                st.session_state.notes_raw_text = _notes_to_markdown(notes)
+                st.session_state.notes_text = st.session_state.notes_raw_text
+                st.session_state.notes_view_mode = "full"
                 st.session_state.meeting_active = False
 
                 if _can_save_to_snowflake():
@@ -410,24 +513,31 @@ with left:
     if (
         st.session_state.bridge_enabled
         and st.session_state.bridge_auto_sync
-        and st.session_state.meeting_active
         and not end_clicked
     ):
-        if line_count != st.session_state.bridge_last_seen_lines:
+        if (
+            line_count != st.session_state.bridge_last_seen_lines
+            or bridge_updated_at != float(st.session_state.bridge_last_seen_updated_at or 0)
+        ):
             st.session_state.transcript_text = _bridge_text(bridge_state)
             st.session_state.bridge_last_seen_lines = line_count
+            st.session_state.bridge_last_seen_updated_at = bridge_updated_at
         time.sleep(UI_REFRESH_SECONDS)
         st.rerun()
 
 with right:
     notes = st.session_state.meeting_notes
     if notes:
-        _render_notes(notes)
+        if st.session_state.notes_view_mode == "simple":
+            st.subheader("Simplified Notes")
+            st.write(_simplify_notes_to_markdown(notes))
+        else:
+            _render_notes(notes)
 
         if st.session_state.saved_meeting_id:
             st.caption(f"Meeting ID: {st.session_state.saved_meeting_id}")
 
-        c1, c2 = st.columns(2)
+        c1, c2, c3 = st.columns(3)
         with c1:
             st.download_button(
                 "Copy Notes (txt)",
@@ -437,12 +547,19 @@ with right:
                 use_container_width=True,
             )
         with c2:
+            if st.button("Simplify", use_container_width=True):
+                st.session_state.notes_text = _simplify_notes_to_markdown(notes)
+                st.session_state.notes_view_mode = "simple"
+                st.rerun()
+        with c3:
             if st.button("New Meeting", use_container_width=True):
                 st.session_state.meeting_active = False
                 st.session_state.transcript_text = ""
                 st.session_state.meeting_notes = None
                 st.session_state.saved_meeting_id = ""
                 st.session_state.notes_text = ""
+                st.session_state.notes_raw_text = ""
+                st.session_state.notes_view_mode = "full"
                 st.session_state.rag_answer = ""
                 st.session_state.rag_sources = []
                 st.rerun()
